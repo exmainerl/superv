@@ -1,0 +1,444 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>点关于直线的对称点计算器</title>
+<style>
+  body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; margin: 18px; background:#fafafa; color:#111; }
+  .container { display:flex; gap:16px; align-items:flex-start; max-width:1200px; margin:0 auto; }
+  .panel { background:white; border:1px solid #e5e7eb; border-radius:8px; padding:16px; box-shadow: 0 1px 2px rgba(0,0,0,0.03); }
+  .left { width:380px; }
+  .right { flex:1; min-width:700px; }
+  h1 { font-size:20px; margin:0 0 12px 0; }
+  label { display:block; margin:8px 0 4px 0; font-size:13px; color:#333; }
+  input[type="text"], input[type="number"] { padding:6px 8px; border:1px solid #d1d5db; border-radius:6px; width:100%; box-sizing:border-box; }
+  .inline { display:flex; gap:8px; align-items:center; }
+  .small { width:88px; }
+  button { padding:8px 12px; border-radius:6px; border:0; cursor:pointer; }
+  .btn-primary { background:#2563eb; color:white; }
+  .btn-ghost { background:#f3f4f6; color:#111; border:1px solid #e5e7eb; }
+  .note { font-size:12px; color:#6b7280; margin-top:8px; }
+  .result { margin-top:10px; font-size:14px; }
+  .svg-wrap { border:1px solid #e5e7eb; background:white; border-radius:6px; overflow:hidden; }
+  input[type="range"] { width:100%; }
+  .muted { color:#6b7280; font-size:13px; }
+  .label-inline { font-size:13px; color:#374151; margin-right:8px; }
+  .text-xs { font-size:12px; color:#374151; }
+</style>
+</head>
+<body>
+
+<h1>点关于直线的对称点计算器（纯 HTML 单文件）</h1>
+<div class="container">
+  <div class="panel left">
+    <div>
+      <label>直线 <span class="muted">Ax + By + C = 0</span></label>
+      <div class="inline" style="margin-bottom:8px;">
+        <input id="A" class="small" type="text" placeholder="A (如 1 或 3/2 或 0.5)" value="1" />
+        <span class="label-inline">x +</span>
+        <input id="B" class="small" type="text" placeholder="B" value="0" />
+        <span class="label-inline">y +</span>
+        <input id="C" type="text" placeholder="C" value="0" style="width:120px;" />
+        <span class="label-inline">= 0</span>
+      </div>
+
+      <label>点 (x, y)</label>
+      <div class="inline" style="margin-bottom:10px;">
+        <input id="px" class="small" type="text" placeholder="x (如 2 或 3/4 或 1.25)" value="2" />
+        <input id="py" class="small" type="text" placeholder="y" value="1" />
+      </div>
+
+      <div style="display:flex; gap:8px; margin-bottom:8px;">
+        <button id="calcBtn" class="btn-primary">计算对称点</button>
+        <button id="resetBtn" class="btn-ghost">刷新</button>
+      </div>
+
+      <div style="margin-top:8px;">
+        <label>缩放（单位长度像素） <span id="scaleLabel">40</span> px</label>
+        <input id="scale" type="range" min="10" max="120" value="40" />
+      </div>
+
+      <div class="result" id="resultArea">
+        <div class="muted">尚未计算</div>
+      </div>
+
+      <div class="note">
+        说明：使用教材给定的二元一次方程组计算对称点：<br/>
+        ① A*(x+x0)/2 + B*(y+y0)/2 + C = 0<br/>
+        ② B*(x-x0) - A*(y-y0) = 0<br/>
+        结果以最简分数显示（若整数则显示整数）。
+      </div>
+    </div>
+  </div>
+
+  <div class="panel right">
+    <div class="svg-wrap" style="width:800px; height:600px;">
+      <svg id="svg" width="800" height="600" style="display:block;"></svg>
+    </div>
+    <div style="margin-top:8px;" class="text-xs muted">
+      坐标系原点固定在中心。可调节缩放防止图案无限放大。
+    </div>
+  </div>
+</div>
+
+<script>
+/*
+  Fraction (Frac) 实现（使用 BigInt），支持：
+   - 构造：从字符串（整数、小数、分数形式）或从 (BigInt, BigInt)
+   - 运算：add, sub, mul, div, neg
+   - toString() -> 最简分数或整数
+   - toFloat() -> 用于绘图近似
+*/
+
+class Frac {
+  constructor(n, d = 1n) {
+    if (typeof n === 'number') n = BigInt(Math.round(n));
+    if (typeof d === 'number') d = BigInt(Math.round(d));
+    if (d === 0n) throw new Error('分母为 0');
+    if (d < 0n) { n = -n; d = -d; }
+    const g = Frac._gcd(n < 0n ? -n : n, d);
+    this.n = n / g;
+    this.d = d / g;
+  }
+
+  static _gcd(a, b) {
+    a = BigInt(a); b = BigInt(b);
+    while (b !== 0n) {
+      const t = a % b;
+      a = b;
+      b = t;
+    }
+    return a;
+  }
+
+  static fromString(s) {
+    s = String(s).trim();
+    if (s === '') throw new Error('空输入');
+    // fraction like -3/4
+    const neg = s.startsWith('-');
+    if (neg) s = s.slice(1);
+    if (s.includes('/')) {
+      const parts = s.split('/');
+      if (parts.length !== 2) throw new Error('非法分数格式');
+      const ns = parts[0].trim() || '0';
+      const ds = parts[1].trim() || '1';
+      const n = BigInt(ns);
+      const d = BigInt(ds);
+      return new Frac(neg ? -n : n, d);
+    }
+    // decimal
+    if (s.includes('.')) {
+      const parts = s.split('.');
+      const intp = parts[0] || '0';
+      const fracp = (parts[1] || '');
+      const den = 10n ** BigInt(fracp.length);
+      const num = BigInt(intp) * den + (fracp ? BigInt(fracp) : 0n);
+      return new Frac(neg ? -num : num, den);
+    }
+    // integer
+    const v = BigInt(s);
+    return new Frac(neg ? -v : v, 1n);
+  }
+
+  static fromNumber(num, denomPow10 = 6) {
+    // convert float to fraction with denominator 10^denomPow10, then reduce
+    const sign = num < 0 ? -1 : 1;
+    const a = Math.abs(Number(num));
+    const den = 10n ** BigInt(denomPow10);
+    const numi = BigInt(Math.round(a * Math.pow(10, denomPow10)));
+    return new Frac(BigInt(sign) * numi, den);
+  }
+
+  add(b) { b = Frac._toFrac(b); return new Frac(this.n * b.d + b.n * this.d, this.d * b.d); }
+  sub(b) { b = Frac._toFrac(b); return new Frac(this.n * b.d - b.n * this.d, this.d * b.d); }
+  mul(b) { b = Frac._toFrac(b); return new Frac(this.n * b.n, this.d * b.d); }
+  div(b) { b = Frac._toFrac(b); if (b.n === 0n) throw new Error('除以零'); return new Frac(this.n * b.d, this.d * b.n); }
+  neg() { return new Frac(-this.n, this.d); }
+  toString() {
+    if (this.d === 1n) return this.n.toString();
+    return this.n.toString() + '/' + this.d.toString();
+  }
+  toFloat() {
+    return Number(this.n) / Number(this.d);
+  }
+  static _toFrac(x) {
+    if (x instanceof Frac) return x;
+    if (typeof x === 'string' || typeof x === 'number') return Frac.fromString(x);
+    throw new Error('无法转换为 Frac');
+  }
+}
+
+// DOM 元素
+const Ainp = document.getElementById('A');
+const Binp = document.getElementById('B');
+const Cinp = document.getElementById('C');
+const pxinp = document.getElementById('px');
+const pyinp = document.getElementById('py');
+const calcBtn = document.getElementById('calcBtn');
+const resetBtn = document.getElementById('resetBtn');
+const resultArea = document.getElementById('resultArea');
+const scaleRange = document.getElementById('scale');
+const scaleLabel = document.getElementById('scaleLabel');
+const svg = document.getElementById('svg');
+
+let state = { result: null, scale: Number(scaleRange.value) };
+
+// 缩放变化
+scaleRange.addEventListener('input', () => {
+  state.scale = Number(scaleRange.value);
+  scaleLabel.textContent = state.scale;
+  draw();
+});
+
+// 计算逻辑（按照用户指定方程组）
+function compute() {
+  try {
+    const A = Frac.fromString(Ainp.value || '0');
+    const B = Frac.fromString(Binp.value || '0');
+    const C = Frac.fromString(Cinp.value || '0');
+    const x = Frac.fromString(pxinp.value || '0');
+    const y = Frac.fromString(pyinp.value || '0');
+
+    // det = A^2 + B^2
+    const det = A.mul(A).add(B.mul(B));
+    if (det.n === 0n) throw new Error('A 和 B 不可同时为 0');
+
+    // R1 = -A*x - B*y - 2C
+    const two = new Frac(2n,1n);
+    const R1 = A.mul(x).neg().add(B.mul(y).neg()).add(C.mul(two).neg());
+    // R2 = A*y - B*x
+    const R2 = A.mul(y).sub(B.mul(x));
+
+    // x0 = (A*R1 - B*R2)/det
+    const x0 = A.mul(R1).sub(B.mul(R2)).div(det);
+    // y0 = (B*R1 + A*R2)/det
+    const y0 = B.mul(R1).add(A.mul(R2)).div(det);
+
+    state.result = { A, B, C, x, y, x0, y0 };
+    showResult();
+    draw();
+  } catch (e) {
+    alert('输入有误：' + e.message);
+  }
+}
+
+// 清空
+function resetAll() {
+  Ainp.value = '';
+  Binp.value = '';
+  Cinp.value = '';
+  pxinp.value = '';
+  pyinp.value = '';
+  state.result = null;
+  resultArea.innerHTML = '<div class="muted">尚未计算</div>';
+  draw();
+}
+
+// 展示结果（分数形式）
+function showResult() {
+  if (!state.result) {
+    resultArea.innerHTML = '<div class="muted">尚未计算</div>';
+    return;
+  }
+  const r = state.result;
+  const html = `
+    <div>输入点：(<strong>${r.x.toString()}</strong>, <strong>${r.y.toString()}</strong>)</div>
+    <div>对称点：(<strong>${r.x0.toString()}</strong>, <strong>${r.y0.toString()}</strong>)</div>
+    <div class="note">注：若出现小数输入，内部会转换为分数并化简显示。</div>
+  `;
+  resultArea.innerHTML = html;
+}
+
+// 绘图辅助
+function toScreenX(x) {
+  // x 为数学坐标（数值），svg width 800，原点在中间
+  const w = svg.clientWidth || 800;
+  return w/2 + x * state.scale;
+}
+function toScreenY(y) {
+  const h = svg.clientHeight || 600;
+  return h/2 - y * state.scale;
+}
+
+// 计算给定直线在视窗内的两个端点（数值近似）
+function lineEndpointsFloat(Af, Bf, Cf) {
+  const w = svg.clientWidth || 800;
+  const h = svg.clientHeight || 600;
+  const minx = -w/2 / state.scale;
+  const maxx = w/2 / state.scale;
+  const miny = -h/2 / state.scale;
+  const maxy = h/2 / state.scale;
+  const pts = [];
+
+  const a = Af.toFloat();
+  const b = Bf.toFloat();
+  const c = Cf.toFloat();
+
+  // 如果 |b| > eps 用 x边界算 y
+  if (Math.abs(b) > 1e-12) {
+    const y1 = ( -a * minx - c) / b;
+    const y2 = ( -a * maxx - c) / b;
+    pts.push({x: minx, y: y1});
+    pts.push({x: maxx, y: y2});
+  } else if (Math.abs(a) > 1e-12) {
+    // vertical line x = -c/a
+    const xv = -c / a;
+    pts.push({x: xv, y: miny});
+    pts.push({x: xv, y: maxy});
+  }
+  return pts.slice(0,2);
+}
+
+// 绘制网格、坐标轴、直线、点、对称点、连接线
+function draw() {
+  // clear
+  while (svg.firstChild) svg.removeChild(svg.firstChild);
+
+  const w = svg.clientWidth || 800;
+  const h = svg.clientHeight || 600;
+
+  // background
+  const bg = document.createElementNS('http://www.w3.org/2000/svg','rect');
+  bg.setAttribute('x',0); bg.setAttribute('y',0); bg.setAttribute('width',w); bg.setAttribute('height',h);
+  bg.setAttribute('fill','#fff');
+  svg.appendChild(bg);
+
+  // grid spacing: draw vertical lines for integer coordinates within view
+  // compute visible integer range
+  const unitsPerHalfWidth = (w/2) / state.scale;
+  const unitsPerHalfHeight = (h/2) / state.scale;
+  const minX = Math.floor(-unitsPerHalfWidth) - 1;
+  const maxX = Math.ceil(unitsPerHalfWidth) + 1;
+  const minY = Math.floor(-unitsPerHalfHeight) - 1;
+  const maxY = Math.ceil(unitsPerHalfHeight) + 1;
+
+  // faint grid lines
+  for (let xi = minX; xi <= maxX; xi++) {
+    const xS = toScreenX(xi);
+    const line = document.createElementNS('http://www.w3.org/2000/svg','line');
+    line.setAttribute('x1', xS); line.setAttribute('x2', xS);
+    line.setAttribute('y1', 0); line.setAttribute('y2', h);
+    line.setAttribute('stroke', '#f3f4f6'); line.setAttribute('stroke-width', 1);
+    svg.appendChild(line);
+  }
+  for (let yi = minY; yi <= maxY; yi++) {
+    const yS = toScreenY(yi);
+    const line = document.createElementNS('http://www.w3.org/2000/svg','line');
+    line.setAttribute('y1', yS); line.setAttribute('y2', yS);
+    line.setAttribute('x1', 0); line.setAttribute('x2', w);
+    line.setAttribute('stroke', '#f3f4f6'); line.setAttribute('stroke-width', 1);
+    svg.appendChild(line);
+  }
+
+  // axes
+  const xAxis = document.createElementNS('http://www.w3.org/2000/svg','line');
+  xAxis.setAttribute('x1', 0); xAxis.setAttribute('x2', w);
+  xAxis.setAttribute('y1', toScreenY(0)); xAxis.setAttribute('y2', toScreenY(0));
+  xAxis.setAttribute('stroke', '#111827'); xAxis.setAttribute('stroke-width', 1.5);
+  svg.appendChild(xAxis);
+
+  const yAxis = document.createElementNS('http://www.w3.org/2000/svg','line');
+  yAxis.setAttribute('y1', 0); yAxis.setAttribute('y2', h);
+  yAxis.setAttribute('x1', toScreenX(0)); yAxis.setAttribute('x2', toScreenX(0));
+  yAxis.setAttribute('stroke', '#111827'); yAxis.setAttribute('stroke-width', 1.5);
+  svg.appendChild(yAxis);
+
+  // axis ticks and labels
+  for (let xi = minX; xi <= maxX; xi++) {
+    const xS = toScreenX(xi);
+    const tick = document.createElementNS('http://www.w3.org/2000/svg','line');
+    tick.setAttribute('x1', xS); tick.setAttribute('x2', xS);
+    tick.setAttribute('y1', toScreenY(0)-4); tick.setAttribute('y2', toScreenY(0)+4);
+    tick.setAttribute('stroke', '#374151'); tick.setAttribute('stroke-width', 1);
+    svg.appendChild(tick);
+
+    if (xi !== 0 && Math.abs(xS) >= -1000 && Math.abs(xS) <= w+1000) {
+      const t = document.createElementNS('http://www.w3.org/2000/svg','text');
+      t.setAttribute('x', xS + 2); t.setAttribute('y', toScreenY(0) - 6);
+      t.setAttribute('font-size', 10); t.setAttribute('fill', '#374151');
+      t.textContent = xi.toString();
+      svg.appendChild(t);
+    }
+  }
+  for (let yi = minY; yi <= maxY; yi++) {
+    const yS = toScreenY(yi);
+    const tick = document.createElementNS('http://www.w3.org/2000/svg','line');
+    tick.setAttribute('y1', yS); tick.setAttribute('y2', yS);
+    tick.setAttribute('x1', toScreenX(0)-4); tick.setAttribute('x2', toScreenX(0)+4);
+    tick.setAttribute('stroke', '#374151'); tick.setAttribute('stroke-width', 1);
+    svg.appendChild(tick);
+
+    if (yi !== 0) {
+      const t = document.createElementNS('http://www.w3.org/2000/svg','text');
+      t.setAttribute('x', toScreenX(0) + 6); t.setAttribute('y', yS + 4);
+      t.setAttribute('font-size', 10); t.setAttribute('fill', '#374151');
+      t.textContent = yi.toString();
+      svg.appendChild(t);
+    }
+  }
+
+  // origin label
+  const ol = document.createElementNS('http://www.w3.org/2000/svg','text');
+  ol.setAttribute('x', toScreenX(0) + 6); ol.setAttribute('y', toScreenY(0) - 6);
+  ol.setAttribute('font-size', 12); ol.setAttribute('fill', '#111827');
+  ol.textContent = 'O(0,0)';
+  svg.appendChild(ol);
+
+  // if we have result, draw line and points
+  if (!state.result) return;
+
+  const R = state.result;
+  // draw given line (red)
+  const pts = lineEndpointsFloat(R.A, R.B, R.C);
+  if (pts.length === 2) {
+    const l = document.createElementNS('http://www.w3.org/2000/svg','line');
+    l.setAttribute('x1', toScreenX(pts[0].x)); l.setAttribute('y1', toScreenY(pts[0].y));
+    l.setAttribute('x2', toScreenX(pts[1].x)); l.setAttribute('y2', toScreenY(pts[1].y));
+    l.setAttribute('stroke', '#d9534f'); l.setAttribute('stroke-width', 2);
+    svg.appendChild(l);
+  }
+
+  // draw PP' line (dashed)
+  const px = R.x.toFloat(); const py = R.y.toFloat();
+  const x0 = R.x0.toFloat(); const y0 = R.y0.toFloat();
+  const conn = document.createElementNS('http://www.w3.org/2000/svg','line');
+  conn.setAttribute('x1', toScreenX(px)); conn.setAttribute('y1', toScreenY(py));
+  conn.setAttribute('x2', toScreenX(x0)); conn.setAttribute('y2', toScreenY(y0));
+  conn.setAttribute('stroke', '#2563eb'); conn.setAttribute('stroke-width', 1.6);
+  conn.setAttribute('stroke-dasharray','6 4');
+  svg.appendChild(conn);
+
+  // original point P (green)
+  const c1 = document.createElementNS('http://www.w3.org/2000/svg','circle');
+  c1.setAttribute('cx', toScreenX(px)); c1.setAttribute('cy', toScreenY(py)); c1.setAttribute('r', 4);
+  c1.setAttribute('fill', '#16a34a');
+  svg.appendChild(c1);
+  const t1 = document.createElementNS('http://www.w3.org/2000/svg','text');
+  t1.setAttribute('x', toScreenX(px) + 6); t1.setAttribute('y', toScreenY(py) - 6);
+  t1.setAttribute('font-size', 12); t1.setAttribute('fill', '#16a34a');
+  t1.textContent = `P(${R.x.toString()},${R.y.toString()})`;
+  svg.appendChild(t1);
+
+  // symmetric point P' (purple)
+  const c2 = document.createElementNS('http://www.w3.org/2000/svg','circle');
+  c2.setAttribute('cx', toScreenX(x0)); c2.setAttribute('cy', toScreenY(y0)); c2.setAttribute('r', 4);
+  c2.setAttribute('fill', '#7c3aed');
+  svg.appendChild(c2);
+  const t2 = document.createElementNS('http://www.w3.org/2000/svg','text');
+  t2.setAttribute('x', toScreenX(x0) + 6); t2.setAttribute('y', toScreenY(y0) - 6);
+  t2.setAttribute('font-size', 12); t2.setAttribute('fill', '#7c3aed');
+  t2.textContent = `P'(${R.x0.toString()},${R.y0.toString()})`;
+  svg.appendChild(t2);
+}
+
+// 按钮绑定
+calcBtn.addEventListener('click', compute);
+resetBtn.addEventListener('click', resetAll);
+
+// 初次绘制
+draw();
+</script>
+
+</body>
+</html>
